@@ -1,0 +1,149 @@
+import os
+import glob
+import time
+from datetime import datetime
+
+import torch
+import numpy as np
+import gym
+
+# 假设您的PPO实现保存在PPO.py文件中
+from PPO import PPO
+from DCRPPO import DCPPO
+render = False
+
+#################################### Testing ###################################
+def test():
+    print("============================================================================================")
+    print("Testing PPO on Standard Gym Environments (without Box2D)")
+    print("============================================================================================")
+
+    ################## hyperparameters ##################
+    # 选择要测试的环境（不需要Box2D）
+    env_names = [
+        # "CartPole-v1",  # 离散动作，简单平衡任务
+        # "MountainCar-v0",  # 离散动作，爬山任务
+        # "Acrobot-v1",  # 离散动作，摆动任务
+        "Pendulum-v1",  # 连续动作，摆动平衡任务
+    ]
+
+    # 环境特定参数
+    env_params = {
+        "CartPole-v1": {
+            "has_continuous_action_space": False,
+            "max_ep_len": 500,
+            "action_std": None
+        },
+        "MountainCar-v0": {
+            "has_continuous_action_space": False,
+            "max_ep_len": 1000,
+            "action_std": None
+        },
+        "Acrobot-v1": {
+            "has_continuous_action_space": False,
+            "max_ep_len": 500,
+            "action_std": None
+        },
+        "Pendulum-v1": {
+            "has_continuous_action_space": True,
+            "max_ep_len": 200,
+            "action_std": 0.1
+        }
+    }
+
+
+    # 通用参数
+    render = True  # 是否渲染环境
+    frame_delay = 0.01  # 帧间延迟（秒）
+    total_test_episodes = 800  # 每个环境测试的episode数量
+
+    # PPO超参数
+    K_epochs = 80
+    eps_clip = 0.2
+    gamma = 0.95
+    lr_actor = 0.001
+    lr_critic = 0.001
+
+    #####################################################
+    # 测试每个环境
+    for env_name in env_names:
+        print(f"\nTesting on {env_name}")
+        print("-" * 40)
+
+        # 获取环境参数
+        params = env_params[env_name]
+        has_continuous_action_space = params["has_continuous_action_space"]
+        max_ep_len = params["max_ep_len"]
+        action_std = params["action_std"]
+
+        # 创建环境
+        env = gym.make(env_name)
+
+        # 状态和动作空间维度
+        state_dim = env.observation_space.shape[0]
+        if has_continuous_action_space:
+            action_dim = env.action_space.shape[0]
+        else:
+            action_dim = env.action_space.n
+
+        # 初始化PPO代理
+        ppo_agent = DCPPO(state_dim, action_dim, lr_actor, lr_critic, gamma, K_epochs, eps_clip,
+                        has_continuous_action_space, action_std)
+
+        # 尝试加载预训练模型
+        checkpoint_dir = "PPO_preTrained" + '/' + env_name + '/'
+        checkpoint_path = None
+
+        if os.path.exists(checkpoint_dir):
+            # 查找最新的检查点
+            checkpoints = glob.glob(os.path.join(checkpoint_dir, "*.pth"))
+            if checkpoints:
+                # 按修改时间排序，获取最新的检查点
+                checkpoints.sort(key=os.path.getmtime)
+                checkpoint_path = checkpoints[-1]
+                print(f"Loading model from: {checkpoint_path}")
+                ppo_agent.load(checkpoint_path)
+            else:
+                print(f"No pre-trained model found for {env_name}. Using random policy.")
+        else:
+            print(f"No pre-trained model found for {env_name}. Using random policy.")
+
+        print("--------------------------------------------------------------------------------------------")
+
+        # 测试
+        test_rewards = []
+
+        for ep in range(1, total_test_episodes + 1):
+            state = env.reset()
+            ep_reward = 0
+
+            for t in range(1, max_ep_len + 1):
+                action = ppo_agent.select_action(state)
+                state, reward, done, _ = env.step(action)
+                ep_reward += reward
+
+                if render:
+                    env.render()
+                    time.sleep(frame_delay)
+
+                if done:
+                    break
+
+            # 清空缓冲区
+            ppo_agent.buffer.clear()
+
+            test_rewards.append(ep_reward)
+            print(f'Episode: {ep} \t Reward: {ep_reward:.2f}')
+
+        # 计算平均奖励
+        avg_reward = np.mean(test_rewards)
+        std_reward = np.std(test_rewards)
+
+        print(f"Average reward for {env_name}: {avg_reward:.2f} ± {std_reward:.2f}")
+        print("--------------------------------------------------------------------------------------------")
+
+
+
+
+if __name__ == '__main__':
+    test()
